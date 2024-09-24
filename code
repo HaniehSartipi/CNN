@@ -1,0 +1,451 @@
+
+
+pip install keras==2.12.0
+
+import numpy as np
+import tensorflow as tf
+import matplotlib.pyplot as plt
+from keras.datasets import cifar10
+from keras.utils import np_utils
+from keras.models import Sequential
+from keras.layers import Dense, Conv2D, MaxPooling2D, Flatten
+from keras.optimizers import Adam, SGD, RMSprop
+from keras.wrappers.scikit_learn import KerasClassifier
+from keras.callbacks import EarlyStopping
+from sklearn.model_selection import GridSearchCV, train_test_split
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report
+
+(x_train, y_train), (x_test, y_test) = cifar10.load_data()
+
+num_validation_samples = 5000
+indices = np.random.permutation(len(x_train))
+validation_indices = indices[:num_validation_samples]
+train_indices = indices[num_validation_samples:]
+
+x_val = x_train[validation_indices]
+y_val = y_train[validation_indices]
+
+x_train_final = x_train[train_indices]
+y_train_final = y_train[train_indices]
+
+print(f"Final Training data shape: {x_train_final.shape}, Final Training labels shape: {y_train_final.shape}")
+print(f"Validation data shape: {x_val.shape}, Validation labels shape: {y_val.shape}")
+print(f"Test data shape: {x_test.shape}, Test labels shape: {y_test.shape}")
+
+num_hyper_tuning_samples = 10000
+hyper_tuning_indices = np.random.choice(train_indices, num_hyper_tuning_samples, replace=False)
+
+x_hyper_tuning = x_train[hyper_tuning_indices]
+y_hyper_tuning = y_train[hyper_tuning_indices]
+
+split_index = int((5/6) * num_hyper_tuning_samples)
+x_hyper_train = x_hyper_tuning[:split_index]
+y_hyper_train = y_hyper_tuning[:split_index]
+x_hyper_test = x_hyper_tuning[split_index:]
+y_hyper_test = y_hyper_tuning[split_index:]
+
+x_train_final = x_train[train_indices]
+y_train_final = y_train[train_indices]
+
+print(f"Hyperparameter Tuning Training data shape: {x_hyper_train.shape}, labels shape: {y_hyper_train.shape}")
+print(f"Hyperparameter Tuning Test data shape: {x_hyper_test.shape}, labels shape: {y_hyper_test.shape}")
+
+print(f"Final Training data shape after hyperparameter split: {x_train_final.shape}, Final Training labels shape: {y_train_final.shape}")
+
+def create_model(activation='relu', kernel_size=(3, 3), learning_rate=0.001, num_hidden_layers=3, optimizer='adam'):
+    model = Sequential()
+    model.add(Conv2D(32, kernel_size, activation=activation, padding='same', input_shape=(32, 32, 3)))
+    model.add(MaxPooling2D((2, 2)))
+
+    for _ in range(num_hidden_layers):
+        model.add(Conv2D(64, kernel_size, activation=activation, padding='same'))
+        shape = model.layers[-1].output_shape
+        if shape[1] > 2 and shape[2] > 2:
+            model.add(MaxPooling2D((2, 2), padding='same'))
+
+    model.add(Flatten())
+    model.add(Dense(64, activation=activation))
+    model.add(Dense(10, activation='softmax'))
+
+    if optimizer == 'adam':
+        opt = Adam(learning_rate=learning_rate)
+    else:
+        opt = RMSprop(learning_rate=learning_rate)
+
+    model.compile(optimizer=opt, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+param_grid = {
+    'activation': ['relu'],
+    'kernel_size': [(3, 3), (5, 5)],
+    'batch_size': [32, 64],
+    'num_hidden_layers': [3, 4],
+    'learning_rate': [0.001, 0.01],
+    'optimizer': ['adam', 'RMSprop']
+}
+
+model = KerasClassifier(build_fn=create_model, epochs=500, verbose=0)
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+grid = GridSearchCV(estimator=model, param_grid=param_grid, cv=3, n_jobs=-1, scoring='accuracy')
+
+def create_model(activation='relu', kernel_size=(3, 3), learning_rate=0.001, num_hidden_layers=4, optimizer='RMSprop'):
+    model = Sequential()
+    model.add(Conv2D(32, kernel_size, activation=activation, padding='same', input_shape=(32, 32, 3)))
+    model.add(MaxPooling2D((2, 2)))
+
+    for _ in range(num_hidden_layers):
+        model.add(Conv2D(64, kernel_size, activation=activation, padding='same'))
+        shape = model.layers[-1].output_shape
+        if shape[1] > 2 and shape[2] > 2:
+            model.add(MaxPooling2D((2, 2), padding='same'))
+
+    model.add(Flatten())
+    model.add(Dense(64, activation=activation))
+    model.add(Dense(10, activation='softmax'))
+
+    if optimizer == 'adam':
+        opt = Adam(learning_rate=learning_rate)
+    else:
+        opt = RMSprop(learning_rate=learning_rate)
+
+    model.compile(optimizer=opt, loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+best_params = {
+    'activation': 'relu',
+    'kernel_size': (3, 3),
+    'learning_rate': 0.001,
+    'num_hidden_layers': 4,
+    'optimizer': 'RMSprop'
+}
+
+best_model = create_model(**best_params)
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
+
+history = best_model.fit(
+    x_train_final, y_train_final,
+    epochs=500,
+    batch_size=64,
+    validation_data=(x_val, y_val),
+    callbacks=[early_stopping],
+    verbose=1
+)
+
+
+test_loss, test_accuracy = best_model.evaluate(x_test, y_test)
+print(f'Test Accuracy: {test_accuracy:.4f}')
+print(f'Test Loss: {test_loss:.4f}')
+
+y_pred = best_model.predict(x_test)
+y_pred_classes = np.argmax(y_pred, axis=1)
+
+accuracy_test = accuracy_score(y_test, y_pred_classes)
+precision_test = precision_score(y_test, y_pred_classes, average='weighted')
+recall_test = recall_score(y_test, y_pred_classes, average='weighted')
+f1_test = f1_score(y_test, y_pred_classes, average='weighted')
+
+print(f'Test Accuracy: {accuracy_test:.4f}')
+print(f'Test Precision: {precision_test:.4f}')
+print(f'Test Recall: {recall_test:.4f}')
+print(f'Test F1-score: {f1_test:.4f}')
+print('\nTest Classification Report:\n', classification_report(y_test, y_pred_classes))
+
+val_loss, val_accuracy = best_model.evaluate(x_val, y_val)
+print(f'Validation Accuracy: {val_accuracy:.4f}')
+print(f'Validation Loss: {val_loss:.4f}')
+
+y_val_pred = best_model.predict(x_val)
+y_val_pred_classes = np.argmax(y_val_pred, axis=1)
+
+accuracy_val = accuracy_score(y_val, y_val_pred_classes)
+precision_val = precision_score(y_val, y_val_pred_classes, average='weighted')
+recall_val = recall_score(y_val, y_val_pred_classes, average='weighted')
+f1_val = f1_score(y_val, y_val_pred_classes, average='weighted')
+
+print(f'Validation Accuracy: {accuracy_val:.4f}')
+print(f'Validation Precision: {precision_val:.4f}')
+print(f'Validation Recall: {recall_val:.4f}')
+print(f'Validation F1-score: {f1_val:.4f}')
+print('\nValidation Classification Report:\n', classification_report(y_val, y_val_pred_classes))
+
+train_loss, train_accuracy = best_model.evaluate(x_train_final, y_train_final)
+print(f'Training Accuracy: {train_accuracy:.4f}')
+print(f'Training Loss: {train_loss:.4f}')
+
+y_train_pred = best_model.predict(x_train_final)
+y_train_pred_classes = np.argmax(y_train_pred, axis=1)
+
+accuracy_train = accuracy_score(y_train_final, y_train_pred_classes)
+precision_train = precision_score(y_train_final, y_train_pred_classes, average='weighted')
+recall_train = recall_score(y_train_final, y_train_pred_classes, average='weighted')
+f1_train = f1_score(y_train_final, y_train_pred_classes, average='weighted')
+
+print(f'Training Accuracy: {accuracy_train:.4f}')
+print(f'Training Precision: {precision_train:.4f}')
+print(f'Training Recall: {recall_train:.4f}')
+print(f'Training F1-score: {f1_train:.4f}')
+print('\nTraining Classification Report:\n', classification_report(y_train_final, y_train_pred_classes))
+
+plt.figure(figsize=(14, 6))
+
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'])
+plt.plot(history.history['val_accuracy'])
+plt.axhline(y=test_accuracy, color='r', linestyle='--')
+plt.title('Model accuracy')
+plt.ylabel('Accuracy')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Validation', 'Test'], loc='upper left')
+
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.axhline(y=test_loss, color='r', linestyle='--')
+plt.title('Model loss')
+plt.ylabel('Loss')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Validation', 'Test'], loc='upper left')
+
+plt.show()
+
+from keras.preprocessing.image import ImageDataGenerator
+
+
+x_train_aug, x_train_direct, y_train_aug, y_train_direct = train_test_split(
+    x_train_final, y_train_final, test_size=0.9, random_state=42)
+
+
+
+datagen = ImageDataGenerator(
+    rotation_range=15,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    horizontal_flip=True,
+    zoom_range=0.3
+)
+
+
+
+x_train_combined = np.concatenate((x_train_augmented, x_train), axis=0)
+y_train_combined = np.concatenate((y_train_augmented, y_train), axis=0)
+
+
+
+datagen.fit(x_train_combined)
+
+history = best_model.fit(datagen.flow(x_train_combined, y_train_combined, batch_size=64), epochs=500, validation_data=(x_val, y_val), callbacks=[early_stopping], verbose=2)
+
+
+test_loss, test_accuracy = best_model.evaluate(x_test, y_test)
+print(f'Test Accuracy: {test_accuracy:.4f}')
+print(f'Test Loss: {test_loss:.4f}')
+
+
+
+x_train_aug, x_train_direct, y_train_aug, y_train_direct = train_test_split(
+    x_train_final, y_train_final, test_size=0.8, random_state=42)
+
+
+
+datagen = ImageDataGenerator(
+    rotation_range=15,
+    width_shift_range=0.1,
+    height_shift_range=0.1,
+    horizontal_flip=True,
+    zoom_range=0.3
+)
+
+
+
+x_train_combined = np.concatenate((x_train_augmented, x_train), axis=0)
+y_train_combined = np.concatenate((y_train_augmented, y_train), axis=0)
+
+datagen.fit(x_train_combined)
+history = best_model.fit(datagen.flow(x_train_combined, y_train_combined, batch_size=64), epochs=500, validation_data=(x_val, y_val), callbacks=[early_stopping], verbose=2)
+
+
+test_loss, test_accuracy = best_model.evaluate(x_test, y_test)
+print(f'Test Accuracy: {test_accuracy:.4f}')
+print(f'Test Loss: {test_loss:.4f}')
+
+y_pred = best_model.predict(x_test)
+y_pred_classes = np.argmax(y_pred, axis=1)
+
+accuracy_test = accuracy_score(y_test, y_pred_classes)
+precision_test = precision_score(y_test, y_pred_classes, average='weighted')
+recall_test = recall_score(y_test, y_pred_classes, average='weighted')
+f1_test = f1_score(y_test, y_pred_classes, average='weighted')
+
+print(f'Test Accuracy: {accuracy_test:.4f}')
+print(f'Test Precision: {precision_test:.4f}')
+print(f'Test Recall: {recall_test:.4f}')
+print(f'Test F1-score: {f1_test:.4f}')
+print('\nTest Classification Report:\n', classification_report(y_test, y_pred_classes))
+
+val_loss, val_accuracy = best_model.evaluate(x_val, y_val)
+print(f'Validation Accuracy: {val_accuracy:.4f}')
+print(f'Validation Loss: {val_loss:.4f}')
+
+y_val_pred = best_model.predict(x_val)
+y_val_pred_classes = np.argmax(y_val_pred, axis=1)
+
+accuracy_val = accuracy_score(y_val, y_val_pred_classes)
+precision_val = precision_score(y_val, y_val_pred_classes, average='weighted')
+recall_val = recall_score(y_val, y_val_pred_classes, average='weighted')
+f1_val = f1_score(y_val, y_val_pred_classes, average='weighted')
+
+print(f'Validation Accuracy: {accuracy_val:.4f}')
+print(f'Validation Precision: {precision_val:.4f}')
+print(f'Validation Recall: {recall_val:.4f}')
+print(f'Validation F1-score: {f1_val:.4f}')
+print('\nValidation Classification Report:\n', classification_report(y_val, y_val_pred_classes))
+
+train_loss, train_accuracy = best_model.evaluate(x_train_final, y_train_final)
+print(f'Training Accuracy: {train_accuracy:.4f}')
+print(f'Training Loss: {train_loss:.4f}')
+
+y_train_pred = best_model.predict(x_train_final)
+y_train_pred_classes = np.argmax(y_train_pred, axis=1)
+
+accuracy_train = accuracy_score(y_train_final, y_train_pred_classes)
+precision_train = precision_score(y_train_final, y_train_pred_classes, average='weighted')
+recall_train = recall_score(y_train_final, y_train_pred_classes, average='weighted')
+f1_train = f1_score(y_train_final, y_train_pred_classes, average='weighted')
+
+print(f'Training Accuracy: {accuracy_train:.4f}')
+print(f'Training Precision: {precision_train:.4f}')
+print(f'Training Recall: {recall_train:.4f}')
+print(f'Training F1-score: {f1_train:.4f}')
+print('\nTraining Classification Report:\n', classification_report(y_train_final, y_train_pred_classes))
+
+plt.figure(figsize=(14, 6))
+
+plt.subplot(1, 2, 1)
+plt.plot(history.history['accuracy'])
+plt.plot(history.history['val_accuracy'])
+plt.axhline(y=test_accuracy, color='r', linestyle='--')
+plt.title('Model accuracy')
+plt.ylabel('Accuracy')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Validation', 'Test'], loc='upper left')
+
+plt.subplot(1, 2, 2)
+plt.plot(history.history['loss'])
+plt.plot(history.history['val_loss'])
+plt.axhline(y=test_loss, color='r', linestyle='--')
+plt.title('Model loss')
+plt.ylabel('Loss')
+plt.xlabel('Epoch')
+plt.legend(['Train', 'Validation', 'Test'], loc='upper left')
+
+plt.show()
+
+
+
+import tensorflow as tf
+import tensorflow_hub as hub
+from matplotlib import pyplot as plt
+import numpy as np
+import cv2
+import random
+
+(x_train, y_train), _ = tf.keras.datasets.cifar10.load_data()
+
+x_train = x_train.astype('float32') / 255.0
+
+num_classes = 7
+class_label = random.randint(0, num_classes - 1)
+class_images = x_train[y_train.flatten() == class_label]
+
+content_image = class_images[random.randint(0, len(class_images) - 1)]
+
+content_image = cv2.resize(content_image, (256, 256))
+
+def load_image(img_path):
+    img = tf.io.read_file('/content/mosaic.jpg')
+    img = tf.image.decode_image(img, channels=3)
+    img = tf.image.convert_image_dtype(img, tf.float32)
+    img = tf.image.resize(img, (256, 256))  # Resize style image to match content image
+    img = img[tf.newaxis, :]
+    return img
+
+style_image = load_image('/content/mosaic.jpg')
+
+plt.imshow(content_image)
+plt.title('Content Image')
+plt.axis('off')
+plt.show()
+
+plt.imshow(np.squeeze(style_image))
+plt.title('Style Image')
+plt.axis('off')
+plt.show()
+
+model = hub.load('https://tfhub.dev/google/magenta/arbitrary-image-stylization-v1-256/2')
+stylized_image = model(tf.constant(content_image[tf.newaxis, ...]), tf.constant(style_image))[0]
+
+plt.imshow(np.squeeze(stylized_image))
+plt.title('Stylized Image')
+plt.axis('off')
+plt.show()
+
+cv2.imwrite('generated_img.jpg', cv2.cvtColor(np.squeeze(stylized_image) * 255, cv2.COLOR_RGB2BGR))
+
+
+
+# Load CIFAR-10 dataset
+(x_train, y_train), _ = tf.keras.datasets.cifar10.load_data()
+
+# Normalize images
+x_train = x_train.astype('float32') / 255.0
+
+# Select one class randomly
+num_classes = 8
+class_label = random.randint(0, num_classes - 1)
+class_images = x_train[y_train.flatten() == class_label]
+
+# Select one random image from the selected class
+content_image = class_images[random.randint(0, len(class_images) - 1)]
+
+# Resize the content image to a higher resolution for better quality
+content_image = cv2.resize(content_image, (256, 256))
+
+# Load and preprocess style image
+def load_image(img_path):
+    img = tf.io.read_file('/content/the_scream.jpg')
+    img = tf.image.decode_image(img, channels=3)
+    img = tf.image.convert_image_dtype(img, tf.float32)
+    img = tf.image.resize(img, (256, 256))  # Resize style image to match content image
+    img = img[tf.newaxis, :]
+    return img
+
+style_image = load_image('/content/the_scream.jpg')
+
+# Display the content image
+plt.imshow(content_image)
+plt.title('Content Image')
+plt.axis('off')
+plt.show()
+
+# Display the style image
+plt.imshow(np.squeeze(style_image))
+plt.title('Style Image')
+plt.axis('off')
+plt.show()
+
+# Perform style transfer using TensorFlow Hub model
+model = hub.load('https://tfhub.dev/google/magenta/arbitrary-image-stylization-v1-256/2')
+stylized_image = model(tf.constant(content_image[tf.newaxis, ...]), tf.constant(style_image))[0]
+
+# Display the stylized image
+plt.imshow(np.squeeze(stylized_image))
+plt.title('Stylized Image')
+plt.axis('off')
+plt.show()
+
+# Save the stylized image
+cv2.imwrite('generated_img.jpg', cv2.cvtColor(np.squeeze(stylized_image) * 255, cv2.COLOR_RGB2BGR))
+
